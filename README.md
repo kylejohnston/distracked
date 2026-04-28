@@ -1,124 +1,110 @@
-```
---------------------------------------------------------------------------------
- "dt" is a simple productivity tool that organizes your work into LIFO stacks.
---------------------------------------------------------------------------------
+# dt
 
+`dt` is a small macOS productivity tool that organizes work into named LIFO
+stacks. It stores stacks as plain text files in
+`${XDG_CONFIG_HOME:-$HOME/.config}/distracked`.
+
+## Usage
+
+```console
 $ ./dt help
 usage: ./dt [subcmd]
-  subcmd:   behavior:
-  all       display entire contents of all stacks
-  cat       display entire contents of current stack
-  edit      open all stacks in text editor for bulk modification
-  head      display top of current stack
-  help      display this message
-  ls        list all stacks
-  pop       remove top of current stack
-  push      add item at top of current stack
-  rm        delete given stack
-  switch    switch to given stack, creating it if necessary
+  subcmd:  behavior:
+  all      display entire contents of all stacks
+  cat      display entire contents of current stack
+  edit     open all stacks in text editor for bulk modification
+  head     display top of current stack
+  heads    display tops of all stacks
+  help     display this message
+  ls       list all stacks
+  pop      remove top of current stack
+  push     add item at top of current stack
+  rm       delete given stack
+  switch   switch to given stack, creating it if necessary
+```
 
---------------------------------------------------------------------------------
-        When you run "dt" for the first time, you'll see an empty stack.
---------------------------------------------------------------------------------
+Running `dt` for the first time creates an empty `main` stack.
 
+```console
 $ ./dt ls
 * main
 
-$ ./dt cat
+$ ./dt
 *
+```
 
---------------------------------------------------------------------------------
-            As you come up with things to do, add them to the stack.
---------------------------------------------------------------------------------
+Push work items onto the current stack. The newest item is shown first.
 
-$ ./dt push Upload dt to Github
-
+```console
+$ ./dt push Upload dt to GitHub
 $ ./dt push Write a readme for dt
-
 $ ./dt push Record a screencast for dt
 
---------------------------------------------------------------------------------
-         "dt cat" will show you all the items, with the latest on top.
---------------------------------------------------------------------------------
-
 $ ./dt cat
+-- main --
 * Record a screencast for dt
 Write a readme for dt
-Upload dt to Github
+Upload dt to GitHub
+```
 
---------------------------------------------------------------------------------
-                 "dt" by itself will show you the latest item.
---------------------------------------------------------------------------------
+Switch stacks when an interruption needs its own context.
 
-$ ./dt
-* Record a screencast for dt
-
---------------------------------------------------------------------------------
-       If you get interrupted, you can make a new stack with "dt switch".
---------------------------------------------------------------------------------
-
+```console
 $ ./dt switch interrupted-by-boss
 * interrupted-by-boss
 main
 
 $ ./dt push Work on important project
-
-$ ./dt push ZOMG go to important meeting
-
---------------------------------------------------------------------------------
-                         "dt ls" will list your stacks.
---------------------------------------------------------------------------------
-$ ./dt ls
-* interrupted-by-boss
-main
-
---------------------------------------------------------------------------------
-            "dt all" will show you the contents of all your stacks.
---------------------------------------------------------------------------------
+$ ./dt push Go to important meeting
 
 $ ./dt all
-
 -- interrupted-by-boss --
-* ZOMG go to important meeting
+* Go to important meeting
 Work on important project
 
 -- main --
 * Record a screencast for dt
 Write a readme for dt
-Upload dt to Github
+Upload dt to GitHub
+```
 
---------------------------------------------------------------------------------
-   As you complete each work item, use "dt pop" to remove it from the stack.
-             If you see "*" by itself, it means the stack is empty.
---------------------------------------------------------------------------------
+Pop completed work. Running `push` with no arguments restores the last popped
+item.
 
+```console
 $ ./dt pop
 
 $ ./dt
 * Work on important project
 
 $ ./dt pop
+$ ./dt push
 
 $ ./dt
-*
+* Work on important project
+```
 
---------------------------------------------------------------------------------
-        When you're done with a stack, you can use "dt rm" to delete it.
---------------------------------------------------------------------------------
+When a stack is no longer needed, remove it.
+
+```console
+$ ./dt switch main
+* main
+interrupted-by-boss
 
 $ ./dt rm interrupted-by-boss
+```
 
---------------------------------------------------------------------------------
-  Phew!  Now you're done with that, and you can get on with whatever you were
-                     doing before you were interrupted. :-)
---------------------------------------------------------------------------------
+Stack names may contain letters, numbers, dots, underscores, and hyphens. They
+must not start with a dot or hyphen.
 
-$ ./dt all
+`dt` can be run from any directory once it is on your `PATH`; it stores and
+loads data from its config directory, not from the current working directory.
+For one-off testing, set `DISTRACKED_DIR` to point at a temporary directory.
 
--- main --
-* Record a screencast for dt
-Write a readme for dt
-Upload dt to Github
+## Development
 
-$ ./dt pop
+Run the test suite with:
+
+```console
+$ ./tests/run.sh
 ```
