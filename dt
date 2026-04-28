@@ -1,88 +1,303 @@
 #!/bin/bash
 
-DISTRACKED_DIR="$HOME/.distracked"
+set -euo pipefail
 
-init() {
-    if [[ ! -e "$DISTRACKED_DIR" ]]; then mkdir "$DISTRACKED_DIR"; fi
-    cd "$DISTRACKED_DIR"; if [[ ! -e "main" ]]; then touch "main"; fi
-    # The rest of the script will assume that:
-    # - We are in the configuration directory.
-    # - There is at least one stack, called "main".
-}
+DISTRACKED_DIR="${DISTRACKED_DIR:-${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}/distracked}"
 
-current_stack() {
-    ls -t |head -n 1
-}
-
-stack_list() {
-    echo -n '* '
-    ls -t |cat
-}
-
-stack_head() {
-    tail -n 1 "$*"
-}
-
-docstr() {
-    true
-}
-
-do_subcmd() {
-    subcmd="$1"
-    shift
-
-    init
-    case "$subcmd" in
-    "all"   ) docstr "display entire contents of all stacks";
-              for f in $(ls -t); do echo -ne "\n-- $f --\n* "; tac "$f"; done;;
-    "cat"   ) docstr "display entire contents of current stack";
-              echo -ne "-- $(current_stack) --\n* " ; tac "$(current_stack)" ;;
-    "edit"  ) docstr "open all stacks in text editor for bulk modification";
-              editor $(ls -t) ;;
-    "head"  ) docstr "display top of stack";
-              echo -n '* ' ; stack_head "$(current_stack)" ;;
-    "heads"  ) docstr "display tops of all stacks";
-              for f in $(ls -t); do echo -ne "\n-- $f --\n* "; stack_head "$f"; done;;
-    "help"  ) docstr "display this message";
-              return 1 ;;
-    "ls"    ) docstr "list all stacks";
-              stack_list ;;
-    "pop"   ) docstr "remove top of stack";
-              stack_head "$(current_stack)" > .yank
-              sed -i.bak '$d' "$(current_stack)"; rm *.bak ;;
-    "push"  ) docstr "add given (default: last popped) item at top of stack";
-              item=${*:-$(cat .yank)}
-              echo "$item" >> "$(current_stack)" ;;
-    "rm"    ) docstr "delete given stack";
-              rm "$*" ;;
-    "switch") docstr "switch to given stack, creating it if necessary";
-              touch "$1" ; stack_list ;;
-    ""      ) echo -n '* ' ; stack_head "$(current_stack)" ;;
-    *)
-        # Unrecognized subcmd
-        return 1
-        ;;
-    esac
-    return 0
-}
-
-usage() {
-    echo "usage: $0 [subcmd]"
-    ((echo "subcmd: | behavior:"
-    declare -f do_subcmd |\
-        grep -B1 '\bdocstr\b' |\
-        grep -o '".*"' |\
-        grep -o '[^"]*' |\
-        sed 'N;s/\n/ | /'
-    ) | column -s '|' -t
-    ) | sed 's/^/  /'
+die() {
+    printf 'dt: %s\n' "$*" >&2
     exit 1
 }
 
-# Script entry point
-do_subcmd "$@"
-if [[ "$?" -ne 0 ]]
-then
-    usage
-fi
+valid_stack_name() {
+    [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]
+}
 
+require_stack_name() {
+    local stack="${1:-}"
+
+    if [[ -z "$stack" ]]; then
+        die "stack name required"
+    fi
+
+    if ! valid_stack_name "$stack"; then
+        die "invalid stack name '$stack'; use letters, numbers, dots, underscores, or hyphens, and do not start with a dot or hyphen"
+    fi
+}
+
+init() {
+    mkdir -p "$DISTRACKED_DIR" || die "could not create $DISTRACKED_DIR"
+    cd "$DISTRACKED_DIR" || die "could not enter $DISTRACKED_DIR"
+
+    if [[ -e main && ! -f main ]]; then
+        die "'main' exists but is not a file"
+    fi
+
+    if [[ ! -f main ]]; then
+        touch main || die "could not create main stack"
+    fi
+
+    if [[ -e .current && ! -f .current ]]; then
+        die "'.current' exists but is not a file"
+    fi
+
+    if [[ ! -f .current ]]; then
+        printf 'main\n' > .current || die "could not create current stack marker"
+    fi
+
+    local stack
+    stack="$(<.current)"
+    if ! valid_stack_name "$stack" || [[ ! -f "$stack" ]]; then
+        printf 'main\n' > .current || die "could not reset current stack marker"
+    fi
+}
+
+current_stack() {
+    local stack
+
+    stack="$(<.current)"
+    if ! valid_stack_name "$stack" || [[ ! -f "$stack" ]]; then
+        stack="main"
+        printf '%s\n' "$stack" > .current
+    fi
+
+    printf '%s\n' "$stack"
+}
+
+stack_names() {
+    local stack
+
+    for stack in *; do
+        [[ -e "$stack" ]] || continue
+        [[ -f "$stack" ]] || continue
+        [[ "$stack" != .* ]] || continue
+        valid_stack_name "$stack" || continue
+        printf '%s\n' "$stack"
+    done | sort
+}
+
+ordered_stack_names() {
+    local current stack
+
+    current="$(current_stack)"
+    printf '%s\n' "$current"
+
+    stack_names | while IFS= read -r stack; do
+        if [[ "$stack" != "$current" ]]; then
+            printf '%s\n' "$stack"
+        fi
+    done
+}
+
+stack_head() {
+    tail -n 1 "$1"
+}
+
+stack_contents() {
+    tail -r "$1"
+}
+
+print_head() {
+    local stack="$1"
+    local head
+
+    if [[ -s "$stack" ]]; then
+        head="$(stack_head "$stack")"
+        printf '* %s\n' "$head"
+    else
+        printf '*\n'
+    fi
+}
+
+print_stack() {
+    local stack="$1"
+
+    printf '%s\n' "-- $stack --"
+    if [[ -s "$stack" ]]; then
+        stack_contents "$stack" | sed '1s/^/* /'
+    else
+        printf '*\n'
+    fi
+}
+
+print_all() {
+    local first=1
+    local stack
+
+    ordered_stack_names | while IFS= read -r stack; do
+        if [[ "$first" -eq 0 ]]; then
+            printf '\n'
+        fi
+        print_stack "$stack"
+        first=0
+    done
+}
+
+print_heads() {
+    local first=1
+    local stack
+
+    ordered_stack_names | while IFS= read -r stack; do
+        if [[ "$first" -eq 0 ]]; then
+            printf '\n'
+        fi
+        printf '%s\n' "-- $stack --"
+        print_head "$stack"
+        first=0
+    done
+}
+
+stack_list() {
+    local current stack
+
+    current="$(current_stack)"
+    printf '* %s\n' "$current"
+
+    stack_names | while IFS= read -r stack; do
+        if [[ "$stack" != "$current" ]]; then
+            printf '%s\n' "$stack"
+        fi
+    done
+}
+
+edit_stacks() {
+    local editor="${EDITOR:-vi}"
+    local stack
+    local stacks=()
+
+    while IFS= read -r stack; do
+        stacks+=("$stack")
+    done < <(ordered_stack_names)
+
+    $editor "${stacks[@]}"
+}
+
+pop_stack() {
+    local stack
+    local head
+    local tmp
+
+    stack="$(current_stack)"
+    if [[ ! -s "$stack" ]]; then
+        die "stack '$stack' is empty"
+    fi
+
+    head="$(stack_head "$stack")"
+    printf '%s\n' "$head" > .yank
+
+    tmp=".$stack.$$.tmp"
+    if ! sed '$d' "$stack" > "$tmp"; then
+        rm -f "$tmp"
+        die "could not update stack '$stack'"
+    fi
+
+    mv "$tmp" "$stack" || die "could not replace stack '$stack'"
+}
+
+push_stack() {
+    local item
+
+    if [[ "$#" -gt 0 ]]; then
+        item="$*"
+    elif [[ -s .yank ]]; then
+        item="$(<.yank)"
+    else
+        die "nothing to push; provide an item or pop one first"
+    fi
+
+    if [[ -z "$item" ]]; then
+        die "cannot push an empty item"
+    fi
+
+    printf '%s\n' "$item" >> "$(current_stack)" || die "could not push item"
+}
+
+remove_stack() {
+    local stack="$1"
+    local current
+
+    require_stack_name "$stack"
+
+    if [[ "$stack" == "main" ]]; then
+        die "cannot remove the main stack"
+    fi
+
+    if [[ ! -f "$stack" ]]; then
+        die "stack '$stack' does not exist"
+    fi
+
+    rm "$stack" || die "could not remove stack '$stack'"
+
+    current="$(current_stack)"
+    if [[ "$current" == "$stack" ]]; then
+        printf 'main\n' > .current
+    fi
+}
+
+switch_stack() {
+    local stack="$1"
+
+    require_stack_name "$stack"
+    touch "$stack" || die "could not create stack '$stack'"
+    printf '%s\n' "$stack" > .current || die "could not switch to stack '$stack'"
+    stack_list
+}
+
+print_usage() {
+    printf 'usage: %s [subcmd]\n' "$0"
+    printf '  %-8s %s\n' 'subcmd:' 'behavior:'
+    printf '  %-8s %s\n' 'all' 'display entire contents of all stacks'
+    printf '  %-8s %s\n' 'cat' 'display entire contents of current stack'
+    printf '  %-8s %s\n' 'edit' 'open all stacks in text editor for bulk modification'
+    printf '  %-8s %s\n' 'head' 'display top of current stack'
+    printf '  %-8s %s\n' 'heads' 'display tops of all stacks'
+    printf '  %-8s %s\n' 'help' 'display this message'
+    printf '  %-8s %s\n' 'ls' 'list all stacks'
+    printf '  %-8s %s\n' 'pop' 'remove top of current stack'
+    printf '  %-8s %s\n' 'push' 'add item at top of current stack'
+    printf '  %-8s %s\n' 'rm' 'delete given stack'
+    printf '  %-8s %s\n' 'switch' 'switch to given stack, creating it if necessary'
+}
+
+usage() {
+    local status="${1:-0}"
+
+    if [[ "$status" -eq 0 ]]; then
+        print_usage
+    else
+        print_usage >&2
+    fi
+
+    exit "$status"
+}
+
+do_subcmd() {
+    local subcmd="${1:-}"
+
+    if [[ "$#" -gt 0 ]]; then
+        shift
+    fi
+
+    case "$subcmd" in
+    "help"|"-h"|"--help") usage 0 ;;
+    esac
+
+    init
+
+    case "$subcmd" in
+    "all"   ) print_all ;;
+    "cat"   ) print_stack "$(current_stack)" ;;
+    "edit"  ) edit_stacks ;;
+    "head"  ) print_head "$(current_stack)" ;;
+    "heads" ) print_heads ;;
+    "ls"    ) stack_list ;;
+    "pop"   ) pop_stack ;;
+    "push"  ) push_stack "$@" ;;
+    "rm"    ) remove_stack "${1:-}" ;;
+    "switch") switch_stack "${1:-}" ;;
+    ""      ) print_head "$(current_stack)" ;;
+    *       ) usage 1 ;;
+    esac
+}
+
+do_subcmd "$@"
